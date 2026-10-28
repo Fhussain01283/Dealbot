@@ -1,0 +1,58 @@
+name: Deal alert bot
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 minutes
+  workflow_dispatch:          # the "Run workflow" button
+    inputs:
+      report:
+        description: Send a full report
+        type: boolean
+        default: false
+
+concurrency:
+  group: deal-bot
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests beautifulsoup4
+
+      # The bot's memory (your products, trips, prices) is kept in a hidden cache,
+      # never in the repo, so it stays private.
+      - uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: dealbot-${{ github.run_id }}
+          restore-keys: dealbot-
+
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        run: python bot.py ${{ inputs.report && '--report' || '' }}
+
+      - uses: actions/cache/save@v4
+        if: always() && hashFiles('state.json') != ''
+        with:
+          path: state.json
+          key: dealbot-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # GitHub pauses schedules after 60 days without a commit; this prevents that.
+      - name: Keep alive
+        run: |
+          if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt 4320000 ]; then
+            git config user.name deal-bot
+            git config user.email deal-bot@users.noreply.github.com
+            git commit --allow-empty -m "keep alive" && git push
+          fi
+    permissions:
+      contents: write
